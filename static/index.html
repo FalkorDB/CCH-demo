@@ -1,0 +1,771 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>US Road Network · FalkorDB CCH</title>
+<script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
+<style>
+  :root { --bg:#11151c; --panel:#171d27; --line:#273244; --txt:#e6edf3; --mut:#8b98a9;
+          --accent:#ff7a29; --route:#ff3b1d; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+              background:var(--bg); color:var(--txt); }
+  #map { position:fixed; inset:0; }
+  .panel { position:fixed; background:rgba(23,29,39,.94); border:1px solid var(--line);
+           border-radius:12px; backdrop-filter:blur(8px); box-shadow:0 8px 30px rgba(0,0,0,.45); }
+  #controls { top:14px; left:14px; width:320px; padding:16px 16px 14px; }
+  #controls h1 { font-size:15px; margin:0 0 2px; letter-spacing:.2px; }
+  #controls .sub { color:var(--mut); font-size:11.5px; margin-bottom:12px; }
+  .stat { display:flex; gap:14px; font-size:11px; color:var(--mut); margin-bottom:12px; }
+  .stat b { color:var(--txt); font-variant-numeric:tabular-nums; }
+  .step { font-size:12px; line-height:1.5; color:var(--mut); margin:10px 0; }
+  .endpoints { font-size:12px; margin:8px 0; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; vertical-align:middle;}
+  .row { display:flex; align-items:center; gap:8px; margin:7px 0; font-size:12.5px; }
+  .btn { flex:1; background:#222c3a; color:var(--txt); border:1px solid var(--line); border-radius:8px;
+         padding:8px 10px; font-size:12.5px; cursor:pointer; transition:.15s; }
+  .btn:hover { background:#2b3849; border-color:#3a495f; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#1a1206; font-weight:600; }
+  .btn.primary:hover { filter:brightness(1.08); }
+  .muted { color:var(--mut); font-size:11px; }
+  #cch-note code { background:#0f1621; border:1px solid var(--line); border-radius:4px;
+                   padding:1px 5px; font-size:10.5px; color:var(--accent); }
+  /* select-roads mode: cyan frame + banner so it's unmistakable */
+  #map.selecting { cursor:crosshair; }
+  body.selecting::after { content:""; position:fixed; inset:0; pointer-events:none; z-index:45;
+    border:3px solid rgba(80,200,255,.9); box-shadow:inset 0 0 22px rgba(80,200,255,.25); }
+  #select-banner { position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:60;
+    display:none; background:#08313f; color:#cdeeff; border:1px solid #50c8ff; border-radius:9px;
+    padding:9px 18px; font-size:13px; box-shadow:0 6px 24px rgba(0,0,0,.45); }
+  #select-banner b { color:#fff; }
+  .result { font-size:13px; margin-top:8px; padding:10px; background:#0f1621; border-radius:8px; border:1px solid var(--line); display:none;}
+  .result .big { font-size:20px; font-weight:700; color:var(--route); font-variant-numeric:tabular-nums;}
+  .ac { position:relative; margin:9px 0; }
+  .field { display:flex; align-items:center; gap:9px; background:#0f1621; border:1px solid var(--line);
+           border-radius:8px; padding:8px 11px; transition:border-color .15s; }
+  .field:focus-within { border-color:#3a495f; }
+  .field .dot { margin:0; flex:0 0 auto; }
+  .addr { flex:1; min-width:0; background:transparent; border:0; outline:0; color:var(--txt); font-size:12.5px; }
+  .addr::placeholder { color:#5f6c7d; }
+  .menu { position:absolute; left:0; right:0; top:100%; margin-top:5px; z-index:30; display:none;
+          background:#0f1621; border:1px solid var(--line); border-radius:8px; overflow:hidden auto;
+          max-height:236px; box-shadow:0 10px 26px rgba(0,0,0,.55); }
+  .menu .item { padding:8px 11px; font-size:12px; cursor:pointer; border-bottom:1px solid #1a2331;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .menu .item:last-child { border-bottom:0; }
+  .menu .item:hover, .menu .item.active { background:#1b2634; }
+  #legend { bottom:14px; left:14px; padding:11px 14px; font-size:11.5px; }
+  #legend .li { display:flex; align-items:center; gap:8px; margin:3px 0; color:var(--mut); }
+  #legend .sw { width:18px; height:3px; border-radius:2px; }
+  #directions { top:14px; right:14px; width:360px; max-height:calc(100% - 28px); overflow:auto;
+                padding:14px 16px; display:none; }
+  #directions h2 { font-size:13px; margin:0 0 4px; color:var(--accent); }
+  #directions .close { position:absolute; top:10px; right:12px; cursor:pointer; color:var(--mut); font-size:16px; }
+  #directions .hint { font-size:11px; color:var(--mut); margin:0 0 8px; }
+  .rcard { position:relative; border:1px solid var(--line); border-radius:9px; padding:9px 11px;
+           margin:7px 0; cursor:pointer; background:#0f1621; transition:.15s; }
+  .rcard:hover { border-color:#3a495f; }
+  .rcard.sel { border-color:var(--route); background:#1b120f; }
+  .rcard.pending { cursor:default; opacity:.6; border-style:dashed; animation:pulse 1.2s ease-in-out infinite; }
+  .rcard.pending:hover { border-color:var(--line); }
+  @keyframes pulse { 50% { opacity:.3; } }
+  .dots::after { content:'…'; animation:dots 1.2s steps(4,end) infinite; }
+  @keyframes dots { 0%{content:'';} 25%{content:'.';} 50%{content:'..';} 75%{content:'…';} }
+  .rc-badge { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--mut); margin-bottom:2px; }
+  .rcard.sel .rc-badge { color:var(--route); }
+  .rc-main { font-size:15px; font-variant-numeric:tabular-nums; }
+  .rc-sub { font-size:11px; margin-top:1px; }
+  #steps { margin-top:12px; border-top:1px solid var(--line); padding-top:4px; }
+  .step-row { display:flex; gap:11px; align-items:flex-start; padding:8px 2px; border-bottom:1px solid #1a2331; }
+  .step-row:last-child { border-bottom:0; }
+  .step-row .man { flex:0 0 20px; text-align:center; font-size:15px; color:var(--accent); line-height:1.35; }
+  .si { flex:1; min-width:0; }
+  .si-txt { font-size:12.5px; line-height:1.4; }
+  .si-d { font-size:11px; color:var(--mut); font-variant-numeric:tabular-nums; margin-top:1px; }
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+             background:var(--bg); z-index:50; flex-direction:column; gap:14px; }
+  .spin { width:34px; height:34px; border:3px solid var(--line); border-top-color:var(--accent);
+          border-radius:50%; animation:sp 1s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  #toast { position:fixed; top:14px; left:50%; transform:translateX(-50%); background:var(--panel);
+           border:1px solid var(--line); padding:8px 16px; border-radius:8px; font-size:12.5px;
+           display:none; z-index:40; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="loading"><div class="spin"></div><div class="muted">Loading road network…</div></div>
+<div id="toast"></div>
+<div id="select-banner">⌘ <b>Holding Command</b> — click roads to select them (release ⌘ to route). ⌘-click a selected road again to deselect.</div>
+
+<div id="controls" class="panel">
+  <h1 id="app-title">🇺🇸 US Road Network</h1>
+  <div class="stat">
+    <div><b id="s-nodes">–</b><br>nodes</div>
+    <div><b id="s-roads">–</b><br>roads</div>
+    <div><b id="s-arcs">–</b><br>CCH index</div>
+  </div>
+
+  <div class="ac">
+    <div class="field"><span class="dot" style="background:#3ad07a"></span>
+      <input id="src-addr" class="addr" placeholder="Source — address or place" autocomplete="off" spellcheck="false"></div>
+    <div id="src-ac" class="menu"></div>
+  </div>
+  <div class="ac">
+    <div class="field"><span class="dot" style="background:#ff5a4d"></span>
+      <input id="dst-addr" class="addr" placeholder="Destination — address or place" autocomplete="off" spellcheck="false"></div>
+    <div id="dst-ac" class="menu"></div>
+  </div>
+
+  <div class="row">
+    <button class="btn primary" id="btn-route">Find shortest path</button>
+    <button class="btn" id="btn-clear">Clear</button>
+  </div>
+
+  <div class="result" id="result">
+    <div><span class="big" id="r-km">–</span> <span class="muted" id="r-algo">via CCH</span></div>
+    <div class="muted" id="r-detail"></div>
+    <div class="muted" id="r-timing" style="margin-top:5px"></div>
+  </div>
+
+  <div id="traffic" style="display:none; margin-top:10px; border-top:1px solid var(--line); padding-top:9px">
+    <div class="muted" id="traffic-sel" style="margin-bottom:6px">Hold <b>⌘</b> and click roads to select</div>
+    <div class="row">
+      <button class="btn" id="btn-traffic">🚧 Add traffic</button>
+      <button class="btn" id="btn-clear-traffic">Clear added traffic</button>
+    </div>
+    <div id="traffic-stat" style="display:none; margin-top:8px">
+      <div class="muted" style="font-size:10px; text-transform:uppercase; letter-spacing:.5px">edge-weight update · CCH re-customize</div>
+      <div style="margin-top:1px"><b id="ts-ms" style="font-size:17px; color:var(--accent); font-variant-numeric:tabular-nums">–</b> <span class="muted" id="ts-info"></span></div>
+    </div>
+  </div>
+</div>
+
+<div id="legend" class="panel">
+  <div class="li" id="lg-route-dist"><span class="sw" style="background:#ff3b1d;height:4px"></span> best route (CCH)</div>
+  <div class="li" id="lg-route-time" style="display:none"><span class="sw" style="background:linear-gradient(90deg,#3ad07a,#f0b414,#ff3b1d);height:4px"></span> route: <span style="color:#3ad07a;font-weight:700">free</span>·<span style="color:#f0b414;font-weight:700">slow</span>·<span style="color:#ff3b1d;font-weight:700">heavy</span></div>
+  <div class="li"><span class="sw" style="background:#7896c8;height:4px"></span> alternative route (A*)</div>
+  <div class="li" id="lg-traffic" style="display:none"><span class="sw" style="background:#50c8ff;height:4px"></span> selected&nbsp;·&nbsp;<span class="sw" style="background:#ff3b1d;height:4px;opacity:.6"></span> congested</div>
+</div>
+
+<div id="directions" class="panel">
+  <div class="close" id="dir-close">✕</div>
+  <h2>Driving directions</h2>
+  <div class="hint" id="dir-hint">Best route via CCH · pick an alternative below or on the map.</div>
+  <div id="route-cards"></div>
+  <div id="steps"></div>
+</div>
+
+<script>
+const API = "";
+let deckgl, viewState = { longitude:35.15, latitude:31.35, zoom:7.15, pitch:0, bearing:0 };
+let roadsData = null;
+let src = null, dst = null;         // {osmid, lng, lat}
+let routePath = null;               // selected route polyline [[lng,lat]...]
+let routes = [], selRoute = 0;      // all K routes returned + selected index
+let routeMeta = {};                 // {cch_ms, alt_ms, altsPending} for the last query
+let routeReq = 0;                   // bumps per route request; drops stale /alternatives
+let mapLabels = [], labelTimer = null;    // zoom-aware place / route / street labels
+let cullTimer = null;                     // debounced road viewport-cull refresh
+let routeByTime = false;            // profile routes by drive time (enables congestion)
+let cmdDown = false;                // ⌘/Ctrl held -> map clicks select roads (not endpoints)
+let selectedEdges = [];             // selected road segments awaiting add/remove traffic
+let congestedEdges = [];            // segments currently slowed (red overlay); mirrors server
+const CONGEST_FACTOR = 6.0;         // how much slower a congested segment gets
+const ROUTE_BIAS_PX = 14;           // ⌘-click within this many px of the route snaps to it
+const CONG_COLOR = { free:[58,208,122], mid:[240,180,20], heavy:[255,59,29] };  // green/amber/red
+const ekey = (u,v)=> u<v ? u+"-"+v : v+"-"+u;
+
+const $ = id => document.getElementById(id);
+function toast(msg, ms=2200){ const t=$("toast"); t.textContent=msg; t.style.display="block";
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.display="none", ms); }
+function fmtKm(m){ return (m/1000).toFixed(m<10000?2:1)+" km"; }
+function fmtDist(m){ return m>=1000 ? (m/1000).toFixed(m<10000?1:0)+" km" : Math.round(m)+" m"; }
+function fmtEta(min){ min=Math.max(1,Math.round(min)); return min<60 ? min+" min" : Math.floor(min/60)+" h "+(min%60)+" min"; }
+function fmtMs(ms){ if(ms==null) return "–"; if(ms>=100) return Math.round(ms)+" ms";
+  if(ms>=10) return ms.toFixed(1)+" ms"; return ms.toFixed(2)+" ms"; }
+const MAN_ICON = { depart:"◉", arrive:"🏁", straight:"↑", "slight-left":"↖", "slight-right":"↗",
+  "turn-left":"←", "turn-right":"→", "sharp-left":"↰", "sharp-right":"↱", "uturn":"⟲" };
+
+// deck.gl's TextLayer lays glyphs out strictly left-to-right with no Unicode bidi,
+// so right-to-left scripts (Hebrew/Arabic) come out reversed. Reorder here: reverse
+// the whole string (making RTL read correctly) then un-reverse each latin/number run
+// so embedded LTR tokens (road numbers, "Route 6") keep their order.
+const RTL_RE  = /[֐-޿יִ-﷿ﹰ-﻿]/;
+const LTR_RUN = /[0-9A-Za-zÀ-ɏ@#._/&-]+/g;
+function bidi(s){
+  if(!s || !RTL_RE.test(s)) return s;
+  const rev = [...s].reverse().join('');
+  return rev.replace(LTR_RUN, m => [...m].reverse().join(''));
+}
+
+// ---- orientation labels (no external basemap: roads on a dark canvas) ----
+let CITIES = [                              // default framing; replaced from /meta
+  {name:"Tel Aviv",   lng:34.7806, lat:32.0809},
+  {name:"Jerusalem",  lng:35.2137, lat:31.7683},
+  {name:"Haifa",      lng:34.9896, lat:32.7940},
+  {name:"Be'er Sheva",lng:34.7913, lat:31.2518},
+  {name:"Nazareth",   lng:35.3035, lat:32.7009},
+  {name:"Ashdod",     lng:34.6553, lat:31.8040},
+  {name:"Netanya",    lng:34.8532, lat:32.3215},
+  {name:"Tiberias",   lng:35.5312, lat:32.7959},
+  {name:"Eilat",      lng:34.9519, lat:29.5577},
+];
+const FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif';
+function citiesLayer(){
+  return new deck.TextLayer({
+    id:"cities", data:CITIES, getPosition:d=>[d.lng,d.lat], getText:d=>bidi(d.name),
+    getSize:13, getColor:[210,222,236,235], billboard:true, getTextAnchor:"middle",
+    fontFamily:FONT, fontWeight:700, fontSettings:{sdf:true},
+    outlineWidth:3, outlineColor:[8,11,17,255], parameters:{depthTest:false}
+  });
+}
+// zoom-aware labels: real place names dominate (size/brightness by class),
+// numbered routes in amber, street names small & muted (only when zoomed in).
+const LBL_STYLE = {
+  city:          {size:15,   color:[236,243,251,245]},
+  town:          {size:12.5, color:[214,225,240,235]},
+  village:       {size:11,   color:[184,197,217,222]},
+  suburb:        {size:10.5, color:[158,172,194,206]},
+  neighbourhood: {size:10,   color:[150,164,186,196]},
+  hamlet:        {size:10,   color:[148,162,184,190]},
+  route:         {size:11,   color:[255,196,84,235]},
+  street:        {size:10,   color:[168,182,205,205]},
+};
+function labelsLayer(){
+  if (!mapLabels.length) return null;
+  return new deck.TextLayer({
+    id:"map-labels", data:mapLabels, getPosition:d=>[d.lng,d.lat], getText:d=>bidi(d.name),
+    getSize:d=>(LBL_STYLE[d.kind]||LBL_STYLE.street).size,
+    getColor:d=>(LBL_STYLE[d.kind]||LBL_STYLE.street).color,
+    billboard:true, getTextAnchor:"middle", getAlignmentBaseline:"center",
+    fontFamily:FONT, fontWeight:600, fontSettings:{sdf:true}, characterSet:"auto",
+    outlineWidth:2.5, outlineColor:[8,11,17,255], parameters:{depthTest:false}
+  });
+}
+
+// ---- road network: viewport culling + level-of-detail --------------------
+// deck.gl's PathLayer runs EVERY vertex through the GPU each frame regardless of
+// the viewport, so drawing the whole network is equally costly zoomed in (a sliver
+// visible) as zoomed out. Two levers, combined:
+//   * cull  — render only paths whose bbox intersects the view (+margin). Huge win
+//             when zoomed in (a few hundred paths instead of hundreds of thousands).
+//   * LOD   — when zoomed out (below LOD_ZOOM) keep only the "major" roads (longest
+//             contracted edges = highway skeleton); local streets are a smudge there.
+// Path bboxes + lengths are precomputed once; the visible subset is rebuilt into a
+// binary blob only when the view leaves the cached (margined) region or the LOD flips.
+const LOD_ZOOM = 9.2;              // below this zoom, keep only major roads
+const LOD_KEEP = 0.22;             // fraction of roads (ranked by length) kept as "major"
+const CULL_MARGIN = 1.0;           // extra viewport-widths kept around the view (pan headroom)
+let rPos=null, rStart=null, rN=0, rBBox=null, rLen=null, rMajorThr=0, rTier=null;
+let culled=null, culledRegion=null, culledBucket=null;
+const TIER_W = [0.7, 1.1, 2.1];    // px line width: 0=local, 1=arterial, 2=highway
+
+function precomputeRoads(){
+  rPos = roadsData.attributes.getPath.value; rStart = roadsData.startIndices; rN = roadsData.length;
+  rTier = roadsData.tiers;
+  rBBox = new Float32Array(rN*4); rLen = new Float32Array(rN);
+  for (let p=0;p<rN;p++){ const a=rStart[p], b=rStart[p+1];
+    let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9,d=0;
+    for (let v=a; v<b; v++){ const x=rPos[v*2], y=rPos[v*2+1];
+      if(x<mnx)mnx=x; if(x>mxx)mxx=x; if(y<mny)mny=y; if(y>mxy)mxy=y;
+      if(v<b-1){ const dx=rPos[(v+1)*2]-x, dy=rPos[(v+1)*2+1]-y; d+=Math.hypot(dx,dy); } }
+    rBBox[p*4]=mnx; rBBox[p*4+1]=mny; rBBox[p*4+2]=mxx; rBBox[p*4+3]=mxy; rLen[p]=d;
+  }
+  rMajorThr = Float64Array.from(rLen).sort()[Math.floor((1-LOD_KEEP)*rN)] || 0;
+}
+function buildCulled(W,S,E,N, minLen){
+  const hit = p => rLen[p]>=minLen && rBBox[p*4]<=E && rBBox[p*4+2]>=W && rBBox[p*4+1]<=N && rBBox[p*4+3]>=S;
+  let kp=0, kv=0;
+  for (let p=0;p<rN;p++){ if(hit(p)){ kp++; kv += rStart[p+1]-rStart[p]; } }
+  return buildCulledTiered(hit);
+}
+// split the visible roads into 3 width tiers (local/arterial/highway), each its own
+// binary blob so it can be drawn with a constant width (reliable) — highways thicker.
+function buildCulledTiered(hit){
+  const kp=[0,0,0], kv=[0,0,0];
+  for (let p=0;p<rN;p++){ if(!hit(p)) continue; const t=rTier?rTier[p]:1; kp[t]++; kv[t]+=rStart[p+1]-rStart[p]; }
+  const pos=kv.map(n=>new Float32Array(n*2)), st=kp.map(n=>new Uint32Array(n+1));
+  const w=[0,0,0], k=[0,0,0];
+  for (let p=0;p<rN;p++){ if(!hit(p)) continue; const t=rTier?rTier[p]:1;
+    const a=rStart[p], b=rStart[p+1];
+    for (let v=a; v<b; v++){ pos[t][w[t]++]=rPos[v*2]; pos[t][w[t]++]=rPos[v*2+1]; }
+    st[t][++k[t]]=w[t]/2; }
+  return [0,1,2].map(t=>({ length:kp[t], startIndices:st[t],
+                           attributes:{ getPath:{ value:pos[t], size:2 } } }));
+}
+function viewBounds(){
+  const el=document.getElementById('map');
+  const vp=new deck.WebMercatorViewport(Object.assign(
+    {width:el.clientWidth||1200, height:el.clientHeight||800}, viewState));
+  return vp.getBounds();   // [w,s,e,n]
+}
+function ensureCulled(){
+  if(!roadsData) return;
+  const [w,s,e,n]=viewBounds();
+  const bucket = viewState.zoom < LOD_ZOOM ? 'major' : 'full';
+  const inside = culledRegion && bucket===culledBucket &&
+    w>=culledRegion[0] && s>=culledRegion[1] && e<=culledRegion[2] && n<=culledRegion[3];
+  if(inside) return;                                 // still within the cached margin
+  const mw=(e-w)*CULL_MARGIN, mh=(n-s)*CULL_MARGIN;
+  const W=w-mw,S=s-mh,E=e+mw,N=n+mh;
+  culled = buildCulled(W,S,E,N, bucket==='major'?rMajorThr:0);
+  culledRegion=[W,S,E,N]; culledBucket=bucket;
+}
+function roadsLayer(){
+  if(!roadsData) return null;
+  ensureCulled();                                   // culled = [localBlob, arterialBlob, highwayBlob]
+  return culled.map((blob,t)=> blob.length ? new deck.PathLayer({
+    id:"roads-"+t, data:blob, _pathType:"open",
+    getColor:[90,120,160,150], getWidth:TIER_W[t], widthUnits:"pixels", widthMinPixels:0.5,
+    jointRounded:false, capRounded:false, parameters:{depthTest:false}   // miter/butt: far fewer triangles
+  }) : null).filter(Boolean);
+}
+
+function layers(){
+  const L = [];
+  const rls = roadsLayer();
+  if (rls) L.push(...rls);
+  // congested roads (server truth) — red overlay, visible even off-route
+  if (congestedEdges.length) L.push(new deck.PathLayer({
+    id:"congested", data:congestedEdges, getPath:d=>d.path,
+    getColor:[255,59,29,150], getWidth:5, widthUnits:"pixels", widthMinPixels:3,
+    jointRounded:true, capRounded:true, parameters:{depthTest:false}
+  }));
+  if (routes.length > 1) L.push(new deck.PathLayer({
+    id:"alts", data:routes.map((rt,idx)=>({path:rt.path, idx})).filter(d=>d.idx!==selRoute),
+    pickable:true, getPath:d=>d.path, getColor:[120,150,200,175],
+    getWidth:3.5, widthUnits:"pixels", widthMinPixels:2.5,
+    autoHighlight:true, highlightColor:[180,205,245,255],
+    jointRounded:true, capRounded:true, parameters:{depthTest:false}
+  }));
+  // selected route: colour by congestion (green/amber/red) when available, else solid
+  const sel = routes[selRoute];
+  if (sel && sel.colored && routeByTime){
+    L.push(new deck.PathLayer({
+      id:"route", data:sel.colored, getPath:d=>d.path,
+      getColor:d=>CONG_COLOR[d.level]||CONG_COLOR.free,
+      getWidth:5, widthUnits:"pixels", widthMinPixels:3.5,
+      jointRounded:true, capRounded:true, parameters:{depthTest:false}
+    }));
+  } else if (routePath) L.push(new deck.PathLayer({
+    id:"route", data:[{path:routePath}], getPath:d=>d.path,
+    getColor:[255,59,29,255], getWidth:5, widthUnits:"pixels", widthMinPixels:3.5,
+    jointRounded:true, capRounded:true, parameters:{depthTest:false}
+  }));
+  // selected roads — drawn ON TOP with a white casing so they're unmistakable
+  if (selectedEdges.length){
+    L.push(new deck.PathLayer({ id:"selected-halo", data:selectedEdges, getPath:d=>d.path,
+      getColor:[255,255,255,230], getWidth:9, widthUnits:"pixels", widthMinPixels:6,
+      jointRounded:true, capRounded:true, parameters:{depthTest:false} }));
+    L.push(new deck.PathLayer({ id:"selected", data:selectedEdges, getPath:d=>d.path,
+      getColor:[40,170,255,255], getWidth:5, widthUnits:"pixels", widthMinPixels:3.5,
+      jointRounded:true, capRounded:true, parameters:{depthTest:false} }));
+  }
+  const pts = [];
+  if (src) pts.push({pos:[src.lng,src.lat], color:[58,208,122]});
+  if (dst) pts.push({pos:[dst.lng,dst.lat], color:[255,90,77]});
+  if (pts.length) L.push(new deck.ScatterplotLayer({
+    id:"pts", data:pts, getPosition:d=>d.pos, getFillColor:d=>d.color,
+    getRadius:6, radiusUnits:"pixels", radiusMinPixels:6, stroked:true,
+    getLineColor:[255,255,255], lineWidthUnits:"pixels", getLineWidth:2,
+    parameters:{depthTest:false}
+  }));
+  const rl = labelsLayer();
+  if (rl) L.push(rl);          // real place / route / street labels (zoom-aware)
+  else L.push(citiesLayer());  // fallback framing until backend labels load
+  return L;
+}
+
+function render(){ deckgl.setProps({layers:layers()}); }
+
+// ---- init deck ----
+deckgl = new deck.DeckGL({
+  container:"map", initialViewState:viewState, controller:true,
+  pickingRadius:8,                     // makes thin route/alt lines easy to click
+  layers:[citiesLayer()],
+  onViewStateChange: ({viewState:vs}) => { viewState = vs;
+    // after the view moves, refresh the culled road detail (rebuilds only if the
+    // view left the cached margin or the LOD bucket flipped — see ensureCulled)
+    clearTimeout(cullTimer); cullTimer=setTimeout(render, 120);
+    clearTimeout(labelTimer); labelTimer=setTimeout(loadLabels, 300); },
+  onClick: onMapClick,
+  getTooltip: ({object, layer}) => {
+    if (!object || !layer) return null;
+    const st = {background:"#171d27",color:"#e6edf3",fontSize:"11px",border:"1px solid #273244",borderRadius:"6px"};
+    if (layer.id==="alts" && routes[object.idx])
+      return {html:`alternative · ${fmtKm(routes[object.idx].weight)}<br><span style="color:#8b98a9">click to select</span>`, style:st};
+    return null;
+  }
+});
+
+function applyEndpoint(which, ep, label){
+  if (which==='src') src = ep; else dst = ep;
+  $(which+'-addr').value = label;
+  updateStatus();
+}
+function updateStatus(){ /* endpoint node ids no longer shown */ }
+async function setEndpointLatLng(which, lat, lng, label){
+  const n = await (await fetch(`${API}/nearest?lat=${lat}&lng=${lng}`)).json();
+  applyEndpoint(which, {osmid:n.osmid, lng:n.lng, lat:n.lat}, label);
+  render();
+}
+async function reverseLabel(which, lat, lng){        // fill field with a real address
+  try {
+    const r = await (await fetch(`${API}/reverse?lat=${lat}&lng=${lng}`)).json();
+    const cur = which==='src' ? src : dst;
+    if (r.label && cur) $(which+'-addr').value = r.label;
+  } catch(e){}
+}
+
+async function onMapClick(info){
+  if (!info.coordinate) return;
+  const [lng,lat] = info.coordinate;
+  const ev = info.srcEvent || {};
+  if (routeByTime && (cmdDown || ev.metaKey || ev.ctrlKey)){ selectRoadAt(lng, lat); return; }  // ⌘-click: pick a road
+  if (info.layer && info.layer.id==="alts" && info.object){ selectRoute(info.object.idx); return; }
+  const n = await (await fetch(`${API}/nearest?lat=${lat}&lng=${lng}`)).json();
+  const ep = {osmid:n.osmid, lng:n.lng, lat:n.lat};
+  const which = (!src || (src && dst)) ? 'src' : 'dst';
+  if (which==='src'){ dst=null; routePath=null; $("dst-addr").value=""; $("result").style.display="none"; }
+  applyEndpoint(which, ep, `📍 ${n.lat.toFixed(5)}, ${n.lng.toFixed(5)}`);
+  render();
+  reverseLabel(which, n.lat, n.lng);                 // async upgrade coords -> address
+  if (which==='dst') runRoute();
+}
+
+const post = (u,b)=>fetch(`${API}${u}`,{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify(b)}).then(r=>r.json());
+
+// draw a primary route (from /route, /congestion or /clear_congestion) immediately;
+// alternatives fill in after via loadAlternatives().
+function showPrimary(routeObj, cch_ms){
+  routes = [routeObj]; selRoute = 0; routePath = routeObj.path;
+  routeMeta = {cch_ms, alt_ms:null, altsPending:true};
+  renderHint(); renderCards(); renderSteps(); updateResult();
+  $("directions").style.display="block";
+}
+async function loadAlternatives(q, reqId){       // 2) A* alternatives around the primary
+  try {
+    const a = await (await fetch(`${API}/alternatives?${q}`)).json();
+    if (reqId !== routeReq) return;               // a newer route/congestion superseded us
+    if (a.found && a.routes && a.routes.length){
+      routes = routes.concat(a.routes);
+      routeMeta.alt_ms = a.alt_ms;
+    }
+    routeMeta.altsPending = false;
+    renderHint(); renderCards(); render();        // selRoute unchanged -> primary stays selected
+  } catch(e){
+    if (reqId !== routeReq) return;
+    routeMeta.altsPending = false; renderHint(); renderCards();
+  }
+}
+
+async function runRoute(){
+  if (!src || !dst){ toast("Set a source and a destination first"); return; }
+  toast("Routing via CCH…", 1500);
+  const q = `src=${src.osmid}&dst=${dst.osmid}&k=3`;
+  const reqId = ++routeReq;                       // this request owns the UI until a newer one starts
+
+  // 1) best route via CCH — draw it the moment it lands, before the slower A* alternatives
+  const r = await (await fetch(`${API}/route?${q}`)).json();
+  if (reqId !== routeReq) return;                 // a newer route began while we waited
+  if (!r.found || !r.route){
+    toast("No path found between these points");
+    routes=[]; routePath=null; hideDirections(); $("result").style.display="none"; render(); return;
+  }
+  showPrimary(r.route, r.cch_ms);
+  fitTo(routePath); render(); loadLabels();
+  loadAlternatives(q, reqId);
+}
+
+// ---- congestion (time profiles): Select-roads mode -> click roads -> add/remove traffic ----
+// ⌘/Ctrl held -> road-select mode. Tracked via global key listeners (reliable, unlike
+// reading the modifier off deck.gl's click event), with a live cyan frame + banner.
+function setCmd(on){
+  if (on === cmdDown) return;
+  cmdDown = on && routeByTime;
+  document.body.classList.toggle("selecting", cmdDown);
+  $("map").classList.toggle("selecting", cmdDown);
+  $("select-banner").style.display = cmdDown ? "block" : "none";
+}
+window.addEventListener("keydown", e => { if (e.key === "Meta" || e.key === "Control") setCmd(true); });
+window.addEventListener("keyup",   e => { if (e.key === "Meta" || e.key === "Control") setCmd(false); });
+window.addEventListener("blur", () => setCmd(false));   // don't get stuck "held" on focus loss
+// click a road (whole same-name stretch) to toggle it in/out of the selection.
+// When a route is shown, bias toward it within ROUTE_BIAS_PX (converted to metres at the
+// current zoom) so slowing the route is easy — but clicks farther off still pick that road.
+async function selectRoadAt(lng, lat){
+  let q = `${API}/select_road?lat=${lat}&lng=${lng}`;
+  if (src && dst && routePath){
+    const mpp = 156543.03392 * Math.cos(lat*Math.PI/180) / Math.pow(2, viewState.zoom);
+    q += `&src=${src.osmid}&dst=${dst.osmid}&bias=${(ROUTE_BIAS_PX*mpp).toFixed(1)}`;
+  }
+  let r;
+  try { r = await (await fetch(q)).json(); }
+  catch(err){ return; }
+  if (!r.found) return;
+  const keys = r.edges.map(e => ekey(e[0], e[1]));
+  const anchorKey = ekey(r.anchor[0], r.anchor[1]);
+  if (selectedEdges.some(s => ekey(s.u, s.v) === anchorKey)) {      // deselect this road
+    const rm = new Set(keys);
+    selectedEdges = selectedEdges.filter(s => !rm.has(ekey(s.u, s.v)));
+    toast(`Deselected ${r.name || "road"}`, 1200);
+  } else {                                                          // select the whole stretch
+    const have = new Set(selectedEdges.map(s => ekey(s.u, s.v)));
+    const add = [];
+    r.edges.forEach((e, i) => {
+      const k = ekey(e[0], e[1]);
+      if (!have.has(k)) add.push({u:e[0], v:e[1], path:r.paths[i]});
+    });
+    selectedEdges = selectedEdges.concat(add);   // NEW array ref -> deck.gl re-tesselates
+    toast(`Selected ${r.name || "road"} · ${r.edges.length} segments`, 1500);
+  }
+  refreshTrafficUI(); render();
+}
+async function addTraffic(){
+  if (!selectedEdges.length){ toast("Hold ⌘ and click roads to select first"); return; }
+  toast("Adding traffic — CCH recustomizing…", 1500);
+  const reqId = ++routeReq;
+  const edges = selectedEdges.map(s => [s.u, s.v]);
+  const body = {edges, factor:CONGEST_FACTOR};
+  if (src && dst){ body.src = src.osmid; body.dst = dst.osmid; }   // reroute only if a route exists
+  let resp;
+  try { resp = await post("/congestion", body); }
+  catch(e){ toast("Congestion failed"); return; }
+  if (reqId !== routeReq) return;
+  const haveC = new Set(congestedEdges.map(c => ekey(c.u,c.v)));   // move selection -> congested overlay
+  congestedEdges = congestedEdges.concat(selectedEdges.filter(s => !haveC.has(ekey(s.u,s.v))));
+  selectedEdges = [];
+  trafficStat(resp, "add");
+  if (resp.route){ showPrimary(resp.route, resp.cch_ms);
+                   loadAlternatives(`src=${src.osmid}&dst=${dst.osmid}&k=3`, reqId); }
+  refreshTrafficUI(); render();
+}
+async function removeTraffic(){
+  const reqId = ++routeReq;
+  // clear the selected roads, or ALL congestion when nothing is selected
+  const edges = selectedEdges.length ? selectedEdges.map(s => [s.u, s.v]) : undefined;
+  const body = {src: src&&src.osmid, dst: dst&&dst.osmid};
+  if (edges) body.edges = edges;
+  let resp;
+  try { resp = await post("/clear_congestion", body); } catch(e){ toast("Clear failed"); return; }
+  if (edges){
+    const rm = new Set(selectedEdges.map(s => ekey(s.u,s.v)));
+    congestedEdges = congestedEdges.filter(c => !rm.has(ekey(c.u,c.v)));
+    selectedEdges = [];
+  } else { congestedEdges = []; selectedEdges = []; }
+  trafficStat(resp, "remove");
+  if (resp.route){ showPrimary(resp.route, resp.cch_ms);
+                   loadAlternatives(`src=${(src&&src.osmid)}&dst=${(dst&&dst.osmid)}&k=3`, reqId); }
+  refreshTrafficUI(); render();
+}
+function trafficStat(resp, kind){
+  if (resp.recustomize_ms == null){                 // nothing actually changed
+    if (kind !== "add") toast("No added traffic to remove.");
+    return;
+  }
+  const n = kind==="add" ? (resp.affected||0) : (resp.cleared||0);
+  $("ts-ms").textContent = fmtMs(resp.recustomize_ms);
+  $("ts-info").textContent = `to ${kind==="add"?"slow":"clear"} ${n.toLocaleString()} segments`;
+  $("traffic-stat").style.display = "block";
+}
+function refreshTrafficUI(){
+  const n = selectedEdges.length, c = congestedEdges.length;
+  $("traffic-sel").innerHTML =
+    (n ? `<b style="color:#50c8ff">${n}</b> segment${n>1?'s':''} selected`
+       : "Hold <b>⌘</b> and click roads to select")
+    + (c ? ` · <b style="color:#ff6a4d">${c}</b> congested` : "");
+  $("btn-traffic").textContent = n ? `🚧 Add traffic to ${n}` : "🚧 Add traffic";
+  $("btn-traffic").classList.toggle("primary", n>0);
+  $("btn-clear-traffic").textContent = n ? "Remove from selected" : "Clear added traffic";
+}
+
+function selectRoute(i){
+  if (i<0 || i>=routes.length) return;
+  selRoute = i; routePath = routes[i].path;
+  renderCards(); renderSteps(); updateResult(); render();
+}
+function updateResult(){
+  const rt = routes[selRoute]; if(!rt) return;
+  $("result").style.display="block";
+  if (routeByTime){                               // headline the drive time; distance secondary
+    $("r-km").textContent = fmtEta(rt.eta_min);
+    $("r-algo").textContent = rt.primary ? `fastest · ${rt.algo}` : `alt · ${rt.algo}`;
+    $("r-detail").textContent = `${fmtKm(rt.weight)} · ${rt.hops.toLocaleString()} segments · ${rt.primary?'best by drive time':'alternative'}`;
+  } else {
+    $("r-km").textContent = fmtKm(rt.weight);
+    $("r-algo").textContent = `via ${rt.algo}`;
+    $("r-detail").textContent = `~${fmtEta(rt.eta_min)} · ${rt.hops.toLocaleString()} road segments · ${rt.primary?'best route':'alternative'}`;
+  }
+  $("r-timing").innerHTML = routeMeta.cch_ms!=null
+    ? `⚡ CCH computed the best route in <b>${fmtMs(routeMeta.cch_ms)}</b>`
+    : `⚡ best route via A* in <b>${fmtMs(rt.compute_ms)}</b>`;
+}
+function renderHint(){
+  const p = routes[0]; if(!p) return;
+  const alts = routes.length - 1;
+  let h = p.algo==='CCH'
+    ? `Best route via <b>CCH</b> in <b>${fmtMs(routeMeta.cch_ms)}</b>`
+    : `Best route via <b>A*</b> in <b>${fmtMs(p.compute_ms)}</b>`;
+  if (alts>0) h += ` · ${alts} alternative${alts>1?'s':''} via <b>A*</b>`
+                 + (routeMeta.alt_ms!=null ? ` in <b>${fmtMs(routeMeta.alt_ms)}</b>` : '');
+  else if (routeMeta.altsPending) h += ` · <span class="muted">finding alternatives via A*…</span>`;
+  h += '. Pick one below or on the map.';
+  $("dir-hint").innerHTML = h;
+}
+function renderCards(){
+  const el = $("route-cards");
+  let html = routes.map((rt,i)=>`
+    <div class="rcard${i===selRoute?' sel':''}" data-i="${i}">
+      <div class="rc-badge">${rt.primary?'★ Best route · '+rt.algo:'Alternative '+i+' · '+rt.algo}</div>
+      <div class="rc-main">${routeByTime
+        ? `<b>${fmtEta(rt.eta_min)}</b> <span class="muted">· ${fmtKm(rt.weight)}</span>`
+        : `<b>${fmtKm(rt.weight)}</b> <span class="muted">· ~${fmtEta(rt.eta_min)}</span>`}</div>
+      <div class="muted rc-sub">${rt.hops.toLocaleString()} segments${rt.compute_ms!=null?` · computed in ${fmtMs(rt.compute_ms)}`:''}</div>
+    </div>`).join('');
+  if (routeMeta.altsPending)                          // slower A* alternatives still coming
+    html += `<div class="rcard pending">
+      <div class="rc-badge muted">Alternatives · A*</div>
+      <div class="muted rc-sub">finding alternatives<span class="dots"></span></div></div>`;
+  el.innerHTML = html;
+  el.querySelectorAll('.rcard[data-i]').forEach(c=> c.onclick=()=>selectRoute(+c.dataset.i));
+}
+function renderSteps(){
+  const rt = routes[selRoute]; if(!rt) return;
+  $("steps").innerHTML = rt.steps.map(s=>`
+    <div class="step-row">
+      <div class="man">${MAN_ICON[s.maneuver]||'•'}</div>
+      <div class="si"><div class="si-txt" dir="auto">${escapeHtml(s.instruction)}</div>
+        ${s.distance>=1 ? `<div class="si-d">${fmtDist(s.distance)}</div>` : ''}</div>
+    </div>`).join('');
+}
+function hideDirections(){ $("directions").style.display="none"; }
+
+function fitTo(path){
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for (const c of path){ minx=Math.min(minx,c[0]);maxx=Math.max(maxx,c[0]);miny=Math.min(miny,c[1]);maxy=Math.max(maxy,c[1]); }
+  try {
+    const el = document.getElementById('map');
+    const vp = new deck.WebMercatorViewport({width:el.clientWidth||1200, height:el.clientHeight||700,
+                  longitude:viewState.longitude, latitude:viewState.latitude, zoom:viewState.zoom});
+    const b = vp.fitBounds([[minx,miny],[maxx,maxy]], {padding:80});
+    viewState = {...viewState, longitude:b.longitude, latitude:b.latitude, zoom:Math.min(b.zoom,15)};
+    deckgl.setProps({initialViewState:viewState});
+  } catch(e){}
+}
+
+async function loadLabels(){
+  if (viewState.zoom < 6.5){ if (mapLabels.length){ mapLabels=[]; render(); } return; }
+  const vp = new deck.WebMercatorViewport(viewState);
+  const [minlng,minlat,maxlng,maxlat] = vp.getBounds();
+  const u = `${API}/labels?minlat=${minlat}&maxlat=${maxlat}&minlng=${minlng}&maxlng=${maxlng}&zoom=${viewState.zoom.toFixed(2)}`;
+  try { const r = await (await fetch(u)).json(); mapLabels = r.labels||[]; render(); }
+  catch(e){}
+}
+
+// ---- address autocomplete ----
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function setupAC(inputId, menuId, which){
+  const inp=$(inputId), menu=$(menuId);
+  let timer=null, items=[], active=-1;
+  const hide=()=>{ menu.style.display='none'; active=-1; };
+  function draw(){
+    if(!items.length){ hide(); return; }
+    menu.innerHTML = items.map((s,i)=>`<div class="item${i===active?' active':''}" data-i="${i}">${escapeHtml(s.label)}</div>`).join('');
+    menu.style.display='block';
+    menu.querySelectorAll('.item').forEach(el=>
+      el.addEventListener('mousedown', e=>{ e.preventDefault(); pick(+el.dataset.i); }));
+  }
+  async function query(){
+    const q=inp.value.trim();
+    if(q.length<3){ items=[]; hide(); return; }
+    try { const r=await (await fetch(`${API}/geocode?q=`+encodeURIComponent(q))).json();
+      items=r.suggestions||[]; active=-1; draw(); }
+    catch(e){ items=[]; hide(); }
+  }
+  async function pick(i){
+    const s=items[i]; if(!s) return;
+    inp.value=s.label; hide();
+    await setEndpointLatLng(which, s.lat, s.lng, s.label);
+    if(src&&dst){ runRoute(); }
+    else { viewState={...viewState, longitude:s.lng, latitude:s.lat, zoom:Math.max(viewState.zoom,12)};
+           deckgl.setProps({initialViewState:viewState}); render(); loadLabels(); }
+  }
+  inp.addEventListener('input', ()=>{ clearTimeout(timer); timer=setTimeout(query,300); });
+  inp.addEventListener('keydown', e=>{
+    if(menu.style.display==='none'){ if(e.key==='Enter'){ e.preventDefault(); $("btn-route").click(); } return; }
+    if(e.key==='ArrowDown'){ e.preventDefault(); active=Math.min(active+1,items.length-1); draw(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); active=Math.max(active-1,0); draw(); }
+    else if(e.key==='Enter'){ e.preventDefault(); pick(active>=0?active:0); }
+    else if(e.key==='Escape'){ hide(); }
+  });
+  inp.addEventListener('blur', ()=> setTimeout(hide,150));
+  inp._resolve = async ()=>{                 // resolve typed text (no pick) to top hit
+    const q=inp.value.trim(); if(!q) return false;
+    try { const r=await (await fetch(`${API}/geocode?q=`+encodeURIComponent(q))).json();
+      const s=(r.suggestions||[])[0];
+      if(s){ inp.value=s.label; await setEndpointLatLng(which, s.lat, s.lng, s.label); return true; } } catch(e){}
+    return false;
+  };
+}
+setupAC('src-addr','src-ac','src');
+setupAC('dst-addr','dst-ac','dst');
+
+// ---- controls ----
+$("btn-route").onclick = async ()=>{
+  if(!src && $("src-addr").value.trim()) await $("src-addr")._resolve();
+  if(!dst && $("dst-addr").value.trim()) await $("dst-addr")._resolve();
+  runRoute();
+};
+$("btn-clear").onclick = ()=>{ src=dst=routePath=null; routes=[]; selRoute=0; selectedEdges=[];
+  if(routeByTime){ refreshTrafficUI(); $("traffic-stat").style.display="none"; }
+  $("result").style.display="none"; hideDirections();
+  $("src-addr").value=""; $("dst-addr").value=""; render(); };
+$("dir-close").onclick = ()=> hideDirections();
+$("btn-traffic").onclick = addTraffic;
+$("btn-clear-traffic").onclick = removeTraffic;
+
+// ---- boot ----
+async function boot(){
+  const meta = await (await fetch(`${API}/meta`)).json();
+  $("s-nodes").textContent = meta.nodes.toLocaleString();
+  $("s-roads").textContent = meta.roads.toLocaleString();
+  // CCH is a graph-level path index with no exposed size, so show presence (✓).
+  $("s-arcs").textContent = (meta.arcs != null) ? meta.arcs.toLocaleString()
+                          : (meta.cch_index ? "✓" : "–");
+  // apply the active profile's UI framing (title/view/cities)
+  if (meta.title){ document.title = meta.title.replace(/^[^\w]+/,'').trim() + " · FalkorDB CCH";
+                   $("app-title").textContent = meta.title; }
+  if (Array.isArray(meta.cities) && meta.cities.length) CITIES = meta.cities;
+  // time-based profiles: route by drive time + enable the congestion tools
+  routeByTime = !!meta.route_by_time;
+  if (routeByTime){
+    $("traffic").style.display = "block";
+    $("lg-traffic").style.display = "flex";
+    $("lg-route-time").style.display = "flex";
+    $("lg-route-dist").style.display = "none";
+    refreshTrafficUI();
+  }
+  if (meta.view){ viewState = {...viewState, ...meta.view}; }
+  deckgl.setProps({initialViewState:viewState});
+
+  const buf = await (await fetch(`${API}/roads.bin`)).arrayBuffer();
+  const dv = new DataView(buf);
+  const nPaths = dv.getUint32(0, true), nPts = dv.getUint32(4, true);
+  const startIndices = new Uint32Array(buf, 8, nPaths+1);
+  const positions   = new Float32Array(buf, 8 + (nPaths+1)*4, nPts*2);
+  const tierOff     = 8 + (nPaths+1)*4 + nPts*2*4;                                // per-road width tier
+  const tiers       = (buf.byteLength >= tierOff + nPaths) ? new Uint8Array(buf, tierOff, nPaths) : null;
+  roadsData = { length:nPaths, startIndices, tiers, attributes:{ getPath:{ value:positions, size:2 } } };
+  precomputeRoads();                              // per-path bboxes + lengths for cull/LOD
+  $("loading").style.display="none";
+  render();
+  loadLabels();
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Source dataset (large; downloaded by setup_us.sh from Geofabrik)
+*.osm.pbf
+*.osm
+
+# Generated build artifacts (rebuild with parse_pbf.py)
+nodes.csv
+roads.csv
+geom.json
+names.json
+# Generated place labels (rebuild with parse_places.py)
+places.json
+
+# Prebuilt California dataset (large; rebuilt by setup_us.sh from the PBF)
+data/
+
+# CCH index build sidecar (arc count for /meta)
+.cch_*.json
+
+# Runtime sidecar (chosen DB port written by setup_us.sh)
+.dbport
+.*.dbport
