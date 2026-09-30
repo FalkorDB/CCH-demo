@@ -26,11 +26,14 @@ between any two addresses in **single-digit milliseconds** — with live traffic
 
 ## Prerequisites
 
-- **Docker** (Docker Desktop running) — pulls the CCH-enabled `falkordb/falkordb:edge-c`
-  image. The `db.idx.cch.*` procedures are **only** in the `edge-c` tag.
+- **Docker** (Docker Desktop running) — `setup_us.sh` starts the official
+  **`falkordb/falkordb:v4.22.0`** image in a container, generously resourced
+  (`--cpus 8 --memory 6g`; override with `FALKORDB_CPUS` / `FALKORDB_MEMORY` /
+  `FALKORDB_IMAGE`). The CCH path index (`CREATE CCH INDEX` / `db.idx.cch.query`)
+  ships in the image.
 - **Python 3.12** (a virtualenv is created automatically).
-- ~2 GB disk for the California OSM extract and ~3 GB free RAM in Docker's VM for the
-  CCH build. (California fits the stock 7.65 GB Docker Desktop VM ~2.6× over.)
+- ~2 GB disk for the California OSM extract and ~3 GB RAM for the CCH build (fits the
+  6 GB container limit with room to spare). Ensure Docker Desktop's VM has ≥6 GB.
 
 > The road dataset is **not** committed to this repo — `setup_us.sh` downloads the
 > California extract from [Geofabrik](https://download.geofabrik.de/) and builds the
@@ -43,8 +46,9 @@ between any two addresses in **single-digit milliseconds** — with live traffic
 ```
 
 The first run creates the Python venv, downloads the California OSM extract (~1.2 GB),
-parses it, starts FalkorDB (`edge-c`), bulk-loads the graph, builds the CCH index, and
-serves the map. Later runs reuse the built graph and start immediately.
+parses it, starts the FalkorDB container (`falkordb/falkordb:v4.22.0`), bulk-loads the
+graph, builds the CCH index, and serves the map. Later runs reuse the built graph and
+start immediately.
 
 Then open **http://localhost:8082**.
 
@@ -89,7 +93,7 @@ the index recustomize and re-route.
    `geom.json` (curved polylines) and `names.json` (street names for directions).
 3. `parse_places.py` → `places.json` (zoom-aware map labels).
 4. `add_traveltime.py` → adds a per-arc `time` column (speed by road class).
-5. Start `falkordb/falkordb:edge-c`, **bulk-load** the graph (creating the `osmid` index).
+5. Start the FalkorDB container (`falkordb/falkordb:v4.22.0`), **bulk-load** the graph (creating the `osmid` index).
 6. `run_cch.py` → `CREATE CCH INDEX … ON (e.time)` and a sanity-check query.
 
 `app.py` (Flask) then serves the map and the routing / congestion / directions endpoints.

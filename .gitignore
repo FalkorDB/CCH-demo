@@ -25,3 +25,6 @@ data/
 # Runtime sidecar (chosen DB port written by setup_us.sh)
 .dbport
 .*.dbport
+
+# Stray run logs
+*.log

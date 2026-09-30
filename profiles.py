@@ -43,9 +43,9 @@ _US_CITIES = [
 PROFILES = {
     "us": {
         # OSM California through the parse pipeline. The full 50-state US graph
-        # (~20M nodes, ~100M+ CCH shortcuts) can't fit this Mac's FalkorDB
-        # container (7.65 GB Docker VM; ~24 GB even maxed), so the delivered graph
-        # is the largest region that fits: California by default (~1.25M nodes).
+        # (~20M nodes, ~100M+ CCH shortcuts) can't fit this Mac's RAM (the CCH build
+        # peak alone needs tens of GB), so the delivered graph is the largest region
+        # that fits: California by default (~1.25M nodes).
         # setup_us.sh's STATES var grows the region on a bigger VM. Real curved
         # geometry, street + place names.
         "graph": "us_roads",
